@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>ShelfGuard AI - Offline Warehouse Control</title>
+<style>
+  body { font-family: 'Segoe UI', sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 20px; }
+  .header { display: flex; justify-content: space-between; align-items: center; background: #1e293b; padding: 16px 24px; border-radius: 10px; border: 1px solid #334155; margin-bottom: 14px; }
+  .telemetry-bar { display: flex; justify-content: space-between; align-items: center; background: #0b1120; border: 1px solid #334155; padding: 12px 20px; border-radius: 10px; margin-bottom: 20px; font-size: 13px; }
+  .pulse { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: #10b981; margin-right: 8px; box-shadow: 0 0 8px #10b981; }
+  .metric-pill { background: #1e293b; padding: 5px 12px; border-radius: 6px; border: 1px solid #334155; }
+  .badge { background: #10b981; color: #064e3b; padding: 4px 12px; border-radius: 20px; font-weight: bold; font-size: 13px; }
+  .grid { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; }
+  .card { background: #1e293b; border: 1px solid #334155; border-radius: 10px; padding: 18px; margin-bottom: 20px; }
+  h2 { margin-top: 0; font-size: 16px; color: #38bdf8; text-transform: uppercase; letter-spacing: 0.5px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 10px; border-bottom: 1px solid #334155; }
+  th { color: #94a3b8; }
+  .risk-high { color: #f87171; font-weight: bold; }
+  .risk-warn { color: #fbbf24; font-weight: bold; }
+  .risk-ok { color: #34d399; }
+  button { background: #2563eb; color: white; border: none; padding: 9px 14px; border-radius: 6px; cursor: pointer; font-weight: 600; }
+  button:hover { background: #1d4ed8; }
+  button:disabled { background: #475569; cursor: not-allowed; }
+  input, select { background: #0f172a; color: white; border: 1px solid #475569; padding: 8px; border-radius: 6px; margin-right: 8px; }
+  .output-box { background: #0f172a; border: 1px solid #334155; padding: 12px; border-radius: 6px; margin-top: 12px; white-space: pre-wrap; font-size: 13px; color: #e2e8f0; min-height: 40px; }
+  .locked { color: #fbbf24; font-weight: bold; }
+</style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <strong style="font-size: 20px;">ShelfGuard AI</strong>
+      <span style="color: #94a3b8; margin-left: 10px;">100% Local QVAC Warehouse Engine</span>
+    </div>
+    <div>
+      <span id="plan-badge" class="badge">Loading...</span>
+      <select id="plan-select" style="margin-left: 10px;">
+        <option value="STARTER">Starter - R299/mo</option>
+        <option value="GROWTH">Growth - R499/mo</option>
+        <option value="BUSINESS">Business - R999/mo</option>
+      </select>
+      <button onclick="changePlan()">Switch Plan</button>
+    </div>
+  </div>
+
+  <div id="telemetry-bar" class="telemetry-bar">Loading real-time telemetry...</div>
+
+  <div class="grid">
+    <div>
+      <div class="card">
+        <h2>Live Warehouse Batches (Best Before &amp; Best After Monitor)</h2>
+        <table>
+          <thead>
+            <tr><th>Batch</th><th>SKU</th><th>Product</th><th>Qty</th><th>Expiry</th><th>Shelf Life</th><th>Price</th></tr>
+          </thead>
+          <tbody id="batch-table"></tbody>
+        </table></div>
+      <div class="card">
+        <h2>10-Day Early Warning &amp; Promo Advisor Agent</h2>
+        <button id="promo-btn" onclick="runPromoReport()">Generate Daily Rand (R) Promo Strategy</button>
+        <div id="promo-output" class="output-box">Click above to run the 10-day expiry analysis...</div>
+      </div>
+    </div>
+
+    <div>
+      <div class="card">
+        <h2>Online Order Fulfillment Guard</h2>
+        <p style="font-size:13px; color:#94a3b8;">Enforces category minimum shelf-life rules (Best Before / Best After).</p>
+        <input id="pick-sku" placeholder="SKU (e.g. MEAT-101)" value="MEAT-101" style="width: 130px;" />
+        <input id="pick-qty" type="number" value="2" min="1" style="width: 60px;" />
+        <button id="pick-btn" onclick="pickOrder()">Pick Order</button>
+        <div id="pick-output" class="output-box">Ready to validate online orders...</div>
+      </div>
+
+      <div class="card">
+        <h2>AI Supplier CSV Batch Extraction</h2>
+        <p id="csv-lock-note" style="font-size:13px; color:#94a3b8;"></p>
+        <input type="file" id="csv-file" accept=".csv" style="margin-bottom: 10px; width: 90%;" />
+        <button id="csv-btn" onclick="uploadCsv()">Extract &amp; Import CSV</button>
+        <div id="csv-output" class="output-box">Upload supplier_delivery.csv or supplier_b_messy.csv...</div>
+      </div>
+    </div>
+  </div>
+
+<script>
+async function refreshState() {
+  try {
+    const res = await fetch('/api/state');
+    const data = await res.json();
+    const p = data.plan;
+    document.getElementById('plan-badge').innerText = `${p.name} Plan (R${p.price_zar}/mo)`;
+    document.getElementById('plan-select').value = p.code;
+    document.getElementById('csv-lock-note').innerHTML = p.csv_ai_enabled
+      ? 'Active: Local QVAC AI normalizes messy supplier headers &amp; ZAR prices.'
+      : '<span class="locked">Locked on R299 Starter. Switch to Growth (R499) or Business (R999) to unlock.</span>';
+
+    const t = data.telemetry;
+    const tBar = document.getElementById('telemetry-bar');
+    if (!p.realtime_tracker) {
+      tBar.innerHTML = `<span class="locked">REAL-TIME TRACKER: LOCKED on R299 Starter - Switch to Growth (R499/mo) or Business (R999/mo) for 24/7 Live Expiry Telemetry.</span>`;
+    } else {
+      const latestEvent = (p.audit_feed_enabled && t.recent_events && t.recent_events.length)
+        ? ` | Latest AI Log [${t.recent_events.time}]: ${t.recent_events.agent}`
+        : '';
+      tBar.innerHTML = `
+        <div><span class="pulse"></span><strong>LIVE REAL-TIME WATCHDOG ACTIVE</strong> <span style="color:#94a3b8;">(Synced ${t.timestamp}${latestEvent})</span></div>
+        <div style="display:flex; gap:10px;">
+          <span class="metric-pill">Total Stock: <strong>R${t.total_inventory_zar.toFixed(2)}</strong></span>
+          <span class="metric-pill" style="color:#fbbf24;">10-Day Risk: <strong>R${t.at_risk_zar.toFixed(2)}</strong></span>
+          <span class="metric-pill" style="color:#f87171;">Blocked: <strong>${t.blocked_batches}</strong></span>
+          <span class="metric-pill" style="color:#34d399;">Healthy: <strong>${t.healthy_batches}</strong></span>
+        </div>`;
+    }
+
+    const tbody = document.getElementById('batch-table');
+    tbody.innerHTML = '';
+    data.batches.forEach(b => {
+      let cls = 'risk-ok';
+      let label = `${b.days_left} days left`;
+      if (b.days_left <= 2) { cls = 'risk-high'; label = `${b.days_left}d (BLOCKED ONLINE)`; }
+      else if (b.days_left <= 10) { cls = 'risk-warn'; label = `${b.days_left}d (10-DAY WARN)`; }
+      tbody.innerHTML += `<tr>
+        <td><strong>${b.batch_id}</strong></td>
+        <td>${b.sku}</td>
+        <td>${b.product}</td>
+        <td>${b.quantity}</td>
+        <td>${b.expiry_date}</td>
+        <td class="${cls}">${label}</td>
+        <td>R${b.price_zar.toFixed(2)}</td>
+      </tr>`;
+    });
+  } catch (err) {
+    console.error('State refresh failed:', err);
+  }
+}
+
+async function changePlan() {
+  const code = document.getElementById('plan-select').value;
+  const fd = new FormData();
+  fd.append('plan_code', code);
+  await fetch('/api/plan', { method: 'POST', body: fd });
+  refreshState();
+}
+
+async function pickOrder() {
+  const btn = document.getElementById('pick-btn');
+  const box = document.getElementById('pick-output');
+  btn.disabled = true;
+  box.innerText = 'Fulfillment Guard Agent checking batch shelf life...';
+  try {
+    const fd = new FormData();
+    fd.append('sku', document.getElementById('pick-sku').value);
+    fd.append('quantity', document.getElementById('pick-qty').value);
+    const res = await fetch('/api/pick', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (!res.ok) { box.innerText = data.error || 'Pick failed.'; return; }
+    box.innerText = `[${data.result.status}] ${data.ai_instruction}`;
+    refreshState();
+  } catch (err) {
+    box.innerText = 'Error: ' + err.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function uploadCsv() {
+  const fileInput = document.getElementById('csv-file');
+  const btn = document.getElementById('csv-btn');
+  const box = document.getElementById('csv-output');
+  if (!fileInput.files || !fileInput.files.length) {
+    box.innerText = 'Please select a CSV file first.';
+    return;
+  }
+  btn.disabled = true;
+  box.innerText = 'Local QVAC AI mapping supplier headers & importing rows...';
+  try {
+    const fd = new FormData();
+    fd.append('file', fileInput.files[0]);
+    const res = await fetch('/api/upload-csv', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (!res.ok) { box.innerText = data.error || JSON.stringify(data.detail) || 'CSV import failed.'; return; }
+    box.innerText = 'Imported Batches:\n' + data.imported.map(i => `* ${i.batch_id} (${i.sku}) -> Exp: ${i.expiry_date}`).join('\n');
+    refreshState();
+  } catch (err) {
+    box.innerText = 'Error: ' + err.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function runPromoReport() {
+  const btn = document.getElementById('promo-btn');
+  const box = document.getElementById('promo-output');
+  btn.disabled = true;
+  box.innerText = '10-Day Promo Advisor Agent analyzing Rand (R) risk...';
+  try {
+    const res = await fetch('/api/promo-report', { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) { box.innerText = data.error || 'Promo generation failed.'; return; }
+    box.innerText = data.report;
+  } catch (err) {
+    box.innerText = 'Error: ' + err.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+refreshState();
+setInterval(refreshState, 4000);
+</script>
+</body>
+</html>
