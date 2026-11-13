@@ -186,7 +186,25 @@ async def api_upload_csv(file: UploadFile = File(...)):
                 content={"error": "AI could not map CSV headers.", "raw": raw_ai},
             )
 
-        col_map = json.loads(match.group(0))
+        raw_map = json.loads(match.group(0))
+        # Normalize even if 1B model flips key/value direction
+        col_map = {}
+        for k, v in raw_map.items():
+            kl, vl = str(k).lower(), str(v).lower()
+            if k in reader.fieldnames:
+                col_map[vl] = k
+            elif v in reader.fieldnames:
+                col_map[kl] = v
+        # Deterministic synonym fallback so small models never fail on key names
+        for h in reader.fieldnames:
+            hl = h.lower()
+            if "batch" in hl or "lot" in hl: col_map.setdefault("batch_id", h)
+            elif "sku" in hl or "item_code" in hl or "product_sku" in hl: col_map.setdefault("sku", h)
+            elif "name" in hl or "desc" in hl or "title" in hl: col_map.setdefault("name", h)
+            elif "cat" in hl or "dept" in hl or "group" in hl: col_map.setdefault("category", h)
+            elif "price" in hl or "rand" in hl or "zar" in hl or "cost" in hl: col_map.setdefault("price_zar", h)
+            elif "qty" in hl or "quant" in hl or "pack" in hl: col_map.setdefault("quantity", h)
+            elif "exp" in hl or "best" in hl or "date" in hl: col_map.setdefault("expiry_date", h)
         imported = []
         for row in rows:
             raw_price = (

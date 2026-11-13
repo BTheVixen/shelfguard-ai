@@ -140,6 +140,10 @@ async function changePlan() {
   const fd = new FormData();
   fd.append('plan_code', code);
   await fetch('/api/plan', { method: 'POST', body: fd });
+  document.getElementById('pick-output').innerText = 'Ready to validate online orders...';
+  document.getElementById('csv-output').innerText = 'Upload supplier_delivery.csv or supplier_b_messy.csv...';
+  document.getElementById('promo-output').innerText = 'Click above to run the 10-day expiry analysis...';
+  document.getElementById('csv-file').value = '';
   refreshState();
 }
 
