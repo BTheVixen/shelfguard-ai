@@ -176,12 +176,23 @@ def get_all_batches() -> list[dict]:
     cursor = conn.cursor()
     today = datetime.now().date()
 
-    cursor.execute("""
-        SELECT b.batch_id, p.sku, p.name, p.category, b.quantity, b.expiry_date, p.price_zar
-        FROM batches b
-        JOIN products p ON b.sku = p.sku
-        ORDER BY b.expiry_date ASC
-    """)
+    plan = get_active_plan()
+    if not plan["csv_ai_enabled"]:
+        cursor.execute("""
+            SELECT b.batch_id, p.sku, p.name, p.category, b.quantity, b.expiry_date, p.price_zar
+            FROM batches b
+            JOIN products p ON b.sku = p.sku
+            WHERE b.batch_id LIKE 'B-%'
+            ORDER BY b.expiry_date ASC
+            LIMIT ?
+        """, (plan["max_batches"],))
+    else:
+        cursor.execute("""
+            SELECT b.batch_id, p.sku, p.name, p.category, b.quantity, b.expiry_date, p.price_zar
+            FROM batches b
+            JOIN products p ON b.sku = p.sku
+            ORDER BY b.expiry_date ASC
+        """)
 
     rows = []
     for batch_id, sku, name, category, qty, exp_str, price in cursor.fetchall():
